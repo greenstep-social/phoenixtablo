@@ -202,6 +202,8 @@
   button.big{flex:1;font-size:18px;padding:14px}
   .hint{font-size:12.5px;color:#8a95bd;line-height:1.6}
   kbd{background:#0d1328;border:1px solid #2f3a6a;border-radius:5px;padding:1px 6px;font:700 11px 'Manrope',sans-serif;color:#dfe5ff}
+
+button:disabled{opacity:.45;cursor:wait}.connection{width:min(1200px,100%);background:#141b33;border:1px solid #26305a;border-radius:14px;padding:16px;display:flex;flex-wrap:wrap;gap:12px;align-items:center}.connection input{padding:12px;border-radius:8px;background:#fff;color:#16254b;font:16px Arial}.connection a{color:#ffb02e;overflow-wrap:anywhere}body.obs .connection{display:none}#board{visibility:hidden}#offlineMark{position:fixed;bottom:8px;left:8px;background:#601c16;color:white;padding:6px 12px;border-radius:5px;font:14px Arial;z-index:10}body.obs .score{cursor:default}.club-logo{order:-1}.side.right .club-logo{margin-right:0;margin-left:auto;order:3}@media(max-width:600px){.controls{grid-template-columns:1fr 1fr;gap:8px}.card{padding:10px}.card:nth-child(n+3){grid-column:1/-1}button.big{min-height:58px}.bottom{gap:8px;padding:6px}.letovo{padding:4px}.letovo img{max-width:65px;height:auto}.match-label{letter-spacing:0;font-size:9px}.set-chip{font-size:10px}.timer{font-size:17px}.team{font-size:10px}.club-logo{width:30px;height:30px}.side{gap:4px;padding:4px}}
 </style>
 </head>
 <body>
@@ -322,6 +324,7 @@
   </div>
 </div>
 
+<div class="connection"><strong>Пульт · управление с телефона</strong><input id="adminPassword" type="password" placeholder="Пароль пульта" autocomplete="current-password"><button id="savePassword">Подключить пульт</button><span id="syncStatus" role="status">Подключаюсь…</span><button id="retryAction" hidden>Повторить отправку</button><button id="cancelAction">Отменить повторную отправку</button><div style="width:100%">Ссылка для Streamlabs: <a id="overlayLink" target="_blank" rel="noopener"></a></div></div><div id="offlineMark" hidden>Нет связи — счёт может быть устаревшим</div>
 <!-- ============ УПРАВЛЕНИЕ ============ -->
 <div class="controls">
   <div class="card">
@@ -384,7 +387,7 @@
       <kbd>Пробел</kbd> — старт/пауза таймера<br>
       <kbd>S</kbd> — сменить подачу, <kbd>Z</kbd> — отменить<br>
       <kbd>N</kbd> — завершить сет<br>
-      <kbd>H</kbd> — скрыть панель (режим для трансляции/OBS)<br>
+      Для трансляции используйте ссылку выше с <b>?view=overlay</b>.<br>
       Клик по цифре счёта: левая кнопка +1, правая −1.<br>
       Очко засчитано → подача автоматически переходит к команде, выигравшей розыгрыш.
     </p>
@@ -393,140 +396,51 @@
 
 <script>
 (() => {
-  const KEY = 'phoenix-scoreboard-v1';
-  const $ = id => document.getElementById(id);
-
-  let st = {
-    nameA: 'Летово', nameB: 'Школа 2109',
-    a: 0, b: 0,
-    setsA: 0, setsB: 0, setNo: 1,
-    serve: 'A',            // у кого подача: 'A' | 'B'
-    elapsed: 0,            // накопленные мс таймера
-    startedAt: null,       // Date.now() при запуске, null — пауза
-    history: []
-  };
-  try { const s = JSON.parse(localStorage.getItem(KEY)); if (s) st = Object.assign(st, s); } catch (e) {}
-  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) {} };
-
-  const snapshot = () => {
-    st.history.push({ a: st.a, b: st.b, serve: st.serve, setsA: st.setsA, setsB: st.setsB, setNo: st.setNo });
-    if (st.history.length > 200) st.history.shift();
-  };
-
-  function bump(el){ el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
-
-  function render(){
-    $('scoreA').textContent = st.a;
-    $('scoreB').textContent = st.b;
-    $('setsA').textContent = st.setsA;
-    $('setsB').textContent = st.setsB;
-    $('setNo').textContent = st.setNo;
-    $('nameA').textContent = st.nameA;
-    $('nameB').textContent = st.nameB;
-    $('ballA').classList.toggle('on', st.serve === 'A');
-    $('ballB').classList.toggle('on', st.serve === 'B');
-    if (document.activeElement !== $('inA')) $('inA').value = st.nameA;
-    if (document.activeElement !== $('inB')) $('inB').value = st.nameB;
-    const running = st.startedAt !== null;
-    $('btnTimer').textContent = running ? '❚❚ Пауза' : (elapsed() > 0 ? '▶ Продолжить' : '▶ Старт');
-    $('liveDot').classList.toggle('on', running);
-    $('timer').classList.toggle('paused', !running && elapsed() > 0);
-    renderTimer();
-  }
-
-  function point(team){                 // очко команде → её подача
-    snapshot();
-    if (team === 'A') st.a++; else st.b++;
-    st.serve = team;
-    bump($(team === 'A' ? 'scoreA' : 'scoreB'));
-    save(); render();
-  }
-  function minus(team){
-    if ((team === 'A' ? st.a : st.b) === 0) return;
-    snapshot();
-    if (team === 'A') st.a--; else st.b--;
-    save(); render();
-  }
-  function undo(){
-    const h = st.history.pop(); if (!h) return;
-    Object.assign(st, h); save(); render();
-  }
-
-  // ---- таймер ----
-  const elapsed = () => st.elapsed + (st.startedAt ? Date.now() - st.startedAt : 0);
-  function fmt(ms){
-    const t = Math.floor(ms / 1000), h = Math.floor(t / 3600),
-          m = Math.floor(t % 3600 / 60), s = t % 60, p = n => String(n).padStart(2, '0');
-    return h ? `${h}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
-  }
-  function renderTimer(){ $('timer').textContent = fmt(elapsed()); }
-  function timerToggle(){
-    if (st.startedAt) { st.elapsed = elapsed(); st.startedAt = null; }
-    else st.startedAt = Date.now();
-    save(); render();
-  }
-  function timerReset(){
-    if (elapsed() > 0 && !confirm('Сбросить таймер матча?')) return;
-    st.elapsed = 0; st.startedAt = null; save(); render();
-  }
-  setInterval(renderTimer, 250);
-
-  const actions = {
-    plusA: () => point('A'), plusB: () => point('B'),
-    minusA: () => minus('A'), minusB: () => minus('B'),
-    serveSwap: () => { snapshot(); st.serve = st.serve === 'A' ? 'B' : 'A'; save(); render(); },
-    undo,
-    resetScore: () => { if (!confirm('Обнулить счёт?')) return; snapshot(); st.a = 0; st.b = 0; save(); render(); },
-    swapSides: () => {
-      snapshot();
-      [st.a, st.b] = [st.b, st.a];
-      [st.nameA, st.nameB] = [st.nameB, st.nameA];
-      st.serve = st.serve === 'A' ? 'B' : 'A';
-      save(); render();
-    },
-    timerToggle, timerReset,
-    endSet: () => {
-      if (st.a === st.b) { alert('Счёт равный: непонятно, кто выиграл сет. Добавь очко или поставь сет вручную.'); return; }
-      const w = st.a > st.b ? 'A' : 'B';
-      if (!confirm(`Завершить сет ${st.setNo}: ${st.a}:${st.b}, победа — ${w === 'A' ? st.nameA : st.nameB}?`)) return;
-      snapshot();
-      st['sets' + w]++; st.a = 0; st.b = 0; st.setNo++;
-      bump($('sets' + w)); save(); render();
-    },
-    setPlusA: () => { snapshot(); st.setsA++; bump($('setsA')); save(); render(); },
-    setPlusB: () => { snapshot(); st.setsB++; bump($('setsB')); save(); render(); },
-    setMinusA: () => { if (!st.setsA) return; snapshot(); st.setsA--; save(); render(); },
-    setMinusB: () => { if (!st.setsB) return; snapshot(); st.setsB--; save(); render(); },
-    setNoPlus: () => { snapshot(); st.setNo++; save(); render(); },
-    setNoMinus: () => { if (st.setNo <= 1) return; snapshot(); st.setNo--; save(); render(); },
-    newMatch: () => {
-      if (!confirm('Начать новый матч? Счёт, сеты и таймер обнулятся.')) return;
-      Object.assign(st, { a: 0, b: 0, setsA: 0, setsB: 0, setNo: 1, elapsed: 0, startedAt: null, history: [] });
-      save(); render();
-    }
-  };
-
-  document.querySelectorAll('[data-act]').forEach(b =>
-    b.addEventListener('click', () => actions[b.dataset.act]()));
-
-  ['A', 'B'].forEach(t => {
-    const el = $('score' + t);
-    el.addEventListener('click', () => point(t));
-    el.addEventListener('contextmenu', e => { e.preventDefault(); minus(t); });
-    $('in' + t).addEventListener('input', e => { st['name' + t] = e.target.value; save(); render(); });
-  });
-
-  document.addEventListener('keydown', e => {
-    if (e.target.tagName === 'INPUT') return;
-    const k = e.code;
-    const map = { KeyQ: 'plusA', KeyA: 'minusA', KeyP: 'plusB', KeyL: 'minusB',
-                  KeyS: 'serveSwap', KeyZ: 'undo', KeyN: 'endSet', Space: 'timerToggle' };
-    if (map[k]) { e.preventDefault(); actions[map[k]](); }
-    if (k === 'KeyH') document.body.classList.toggle('obs');
-  });
-
-  render();
+const $=id=>document.getElementById(id);
+const overlay=new URLSearchParams(location.search).get('view')==='overlay';
+if(overlay)document.body.classList.add('obs');
+let st=null,offset=0,lastOK=0,reading=false,busy=false,pending=null;
+let token='';try{token=sessionStorage.getItem('phoenix-admin')||''}catch{}
+$('adminPassword').value=token;
+function status(text,error=false){$('syncStatus').textContent=text;$('syncStatus').style.color=error?'#ffb287':'#9fe6bd'}
+function lock(){document.querySelectorAll('[data-act],#inA,#inB').forEach(el=>el.disabled=overlay||!st||busy||!!pending||!token);$('retryAction').hidden=!pending}
+function elapsed(){return st?st.elapsed+(st.startedAt!==null?Math.max(0,Date.now()+offset-st.startedAt):0):0}
+function renderTimer(){const t=Math.floor(elapsed()/1000),p=n=>String(n).padStart(2,'0');$('timer').textContent=t>=3600?`${Math.floor(t/3600)}:${p(Math.floor(t/60)%60)}:${p(t%60)}`:`${p(Math.floor(t/60))}:${p(t%60)}`}
+function render(){if(!st)return;
+for(const side of ['A','B']){
+$('score'+side).textContent=st[side.toLowerCase()];$('sets'+side).textContent=st['sets'+side];$('name'+side).textContent=st['name'+side];$('ball'+side).classList.toggle('on',st.serve===side);
+if(document.activeElement!==$('in'+side))$('in'+side).value=st['name'+side];
+}
+$('setNo').textContent=st.setNo;
+$('btnTimer').textContent=st.startedAt!==null?'❚❚ Пауза':(elapsed()?'▶ Продолжить':'▶ Старт');
+$('liveDot').classList.toggle('on',st.startedAt!==null);$('timer').classList.toggle('paused',st.startedAt===null&&elapsed()>0);
+const logo=document.querySelector('.club-logo'),parent=document.querySelector(st.phoenixSide==='B'?'.side.right':'.side.left');if(logo.parentElement!==parent)parent.prepend(logo);
+$('board').style.visibility='visible';renderTimer();lock();
+}
+function accept(data,sentAt){if(!data.state||!Number.isInteger(data.state.revision))throw Error('Неверный ответ сервера');offset=data.serverNow-(sentAt+Date.now())/2;if(!st||data.state.revision>=st.revision){st=data.state;render()}lastOK=Date.now();$('offlineMark').hidden=true}
+async function request(options){const response=await fetch('/api/state',{cache:'no-store',...options,signal:AbortSignal.timeout(10000)});let data;try{data=await response.json()}catch{throw Error('Сервер не найден: загрузите папку api в GitHub и дождитесь деплоя')}
+if(!response.ok)throw Error(data.error||'Ошибка соединения');return data}
+async function poll(){if(reading)return;reading=true;const sentAt=Date.now();try{accept(await request(),sentAt);if(!busy&&!pending)status(token?'Связь установлена · счёт общий':'Связь установлена · введите пароль для управления')}catch(e){status(e.message,true);if(!lastOK||Date.now()-lastOK>10000)$('offlineMark').hidden=false}finally{reading=false;setTimeout(poll,2000)}}
+async function deliver(){if(busy||!pending)return;busy=true;lock();status('Отправляю…');try{
+const sentAt=Date.now();accept(await request({method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify(pending)}),sentAt);
+pending=null;status('Изменение сохранено ✓');
+}catch(e){status(e.message+' Если связь прервалась, нажмите «Повторить отправку».',true)}finally{busy=false;lock()}}
+function action(name,value){if(overlay||!st||busy||pending||!token)return;
+const confirmations={resetScore:'Обнулить очки?',timerReset:'Сбросить таймер?',newMatch:'Начать новый матч? Очки, сеты и время обнулятся.',endSet:`Завершить сет ${st.setNo} при счёте ${st.a}:${st.b}?`,swapSides:'Поменять команды местами вместе с очками, сетами и логотипом?'};
+if(name==='endSet'&&st.a===st.b){status('При равном счёте нельзя завершить сет',true);return}
+if(confirmations[name]&&!confirm(confirmations[name]))return;
+pending={action:name,value,id:crypto.randomUUID()};deliver();}
+$('savePassword').onclick=()=>{token=$('adminPassword').value.trim();try{sessionStorage.setItem('phoenix-admin',token)}catch{}status(token?'Пароль введён. Измените счёт для проверки.':'Введите пароль пульта');lock()};
+$('retryAction').onclick=deliver;
+$('cancelAction').onclick=()=>{if(pending&&!busy&&confirm('Отказаться от повторной отправки? Сначала проверьте текущий счёт: изменение могло успеть сохраниться.')){pending=null;lock()}};
+$('overlayLink').href=location.origin+'/?view=overlay';$('overlayLink').textContent=location.origin+'/?view=overlay';
+document.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>action(b.dataset.act));
+for(const t of ['A','B']){$('in'+t).onchange=e=>action('rename'+t,e.target.value);$('score'+t).onclick=()=>action('plus'+t);$('score'+t).oncontextmenu=e=>{e.preventDefault();action('minus'+t)}}
+document.addEventListener('keydown',e=>{if(overlay||['INPUT','TEXTAREA','BUTTON'].includes(e.target.tagName)||e.repeat)return;const map={KeyQ:'plusA',KeyA:'minusA',KeyP:'plusB',KeyL:'minusB',KeyS:'serveSwap',KeyZ:'undo',KeyN:'endSet',Space:'timerToggle'};if(map[e.code]){e.preventDefault();action(map[e.code])}});
+lock();poll();setInterval(renderTimer,250);
 })();
+
 </script>
 </body>
 </html>
+
